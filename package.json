@@ -2,13 +2,16 @@
   "name": "commax-rs485",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "src/index.js",
   "dependencies": {
+    "koa": "^2.13.4",
+    "koa-router": "^10.1.1",
     "serialport": "^9.2.5"
   },
+  "type": "module",
   "devDependencies": {},
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/index.js"
   },
   "author": "",
   "license": "ISC"
