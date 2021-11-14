@@ -86,9 +86,29 @@ export class RequestPacket extends Packet {
     }
 }
 
+export class SwitchRequestPacket extends RequestPacket {
+    static create(_this, options) {
+        switch(options.name) {
+            case 'state':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x22,
+                    options.id & 0xff,
+                    options.value,
+                    0x01,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            default:
+                throw new TypeError;
+        }
+    }
+}
+
 export class LightRequestPacket extends RequestPacket {
     static create(_this, options) {
-        console.log(options);
         switch(options.name) {
             case 'state':
                 return new this(this.insertChecksum(Buffer.from([
@@ -108,40 +128,209 @@ export class LightRequestPacket extends RequestPacket {
     }
 }
 
-export class ReplyPacket extends Packet {
-    static parse(packet) {
-        switch(packet.type) {
-            case 0x02: /* 보일러 */
-                return new ThermostatReplyPacket(packet.raw);
-            case 0x31: /* ACK */
-                console.log(packet.raw);
-            case 0x30: /* 조명 */
-                return new LightReplyPacket(packet.raw);
-            case 0x20: /* 일괄소등 스위치 */
-                return new SwitchReplyPacket(packet.raw);
-            case 0x76: /* 전열교환기 */
-                return new FanReplyPacket(packet.raw);
-            case 0x79: /* 대기전력차단스위치 */
-                if(packet.raw[3] === 0x10) return new OutletEnergyMeterReplyPacket(packet.raw);
-                if(packet.raw[3] === 0x20) return new OutletReplyPacket(packet.raw);
+export class OutletRequestPacket extends RequestPacket {
+    static create(_this, options) {
+        switch(options.name) {
+            case 'state':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x7a,
+                    options.id & 0xff,
+                    0x01,
+                    options.value,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            case 'mode':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x7a,
+                    options.id & 0xff,
+                    0x02,
+                    ~~(options.value === 'auto'),
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            case 'threshold':
+                const threshold = Buffer.from(options.value.toString().padStart(4,'0'), 'hex');
+                return new this(this.insertChecksum(Buffer.from([
+                    0x7a,
+                    options.id & 0xff,
+                    0x03,
+                    threshold[0],
+                    threshold[1],
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
             default:
+                throw new TypeError;
         }
     }
 }
 
 export class FanRequestPacket extends RequestPacket {
+    static modes = [
+        [0x0, 'off'],
+        [0x2, 'auto'],
+        [0x4, 'manual'],
+        [0x6, 'sleep'],
+        [0x7, 'supply'],
+        [0x8, 'heat'],
+    ];
+
+    static speeds = [
+        [0x0, 'speed_off'],
+        [0x1, 'speed_low'],
+        [0x2, 'speed_middle'],
+        [0x3, 'speed_high'],
+    ];
+
+    static create(_this, options) {
+        switch(options.name) {
+            case 'state':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x78,
+                    options.id & 0xff,
+                    0x01,
+                    options.value?2:0,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            case 'mode':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x78,
+                    options.id & 0xff,
+                    0x01,
+                    this.modes.find(x=>x[1] == options.value)?.[0],
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            case 'speed':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x78,
+                    options.id & 0xff,
+                    0x01,
+                    this.modes.find(x=>x[1] == options.current.state)?.[0] < 3 ? 0x4 : this.modes.find(x=>x[1] == options.current.state)?.[0],
+                    this.speeds.find(x=>x[1] == Math.round(options.value / (100 / (this.speeds.length-1))))?.[0],
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            default:
+                throw new TypeError;
+        }
+    }
+
     static parse(packet) {
         switch(packet.raw[2]) {
             case 0x1:
-                packet.state = {0x0: 'off', 0x2: 'auto', 0x4: 'manual', 0x6: 'sleep', 0x7: 'supply', 0x8: 'heat'}[packet.raw[3]] || `unknown(${packet.raw[3]})`;
+                packet.state = this.modes.find(x=>x[0] === packet.raw[3])?.[1] || `unknown(${packet.raw[3]})`;
                 break;
             case 0x2:
-                packet.fanSpeed = {0x0: 'speed_off', 0x1: 'speed_low', 0x2: 'speed_middle', 0x3: 'speed_high'}[packet.raw[3]] || `unknown(${packet.raw[3]})`;
+                packet.fanSpeed = this.speeds.find(x=>x[0] === packet.raw[3])?.[1] || `unknown(${packet.raw[3]})`;
                 break;
             case 0x3:
                 packet.timer = packet.timerRemainingSec = (packet.raw[3]*60+packet.raw[4])*60;
                 break;
         }
+    }
+}
+
+export class ThermostatRequestPacket extends RequestPacket {
+    static create(_this, options) {
+        switch(options.name) {
+            case 'mode':
+                switch(options.value) {
+                    case 'heat':
+                        return new this(this.insertChecksum(Buffer.from([
+                            0x04,
+                            options.id & 0xff,
+                            0x04,
+                            0x81,
+                            0x00,
+                            0x00,
+                            0x00,
+                            0x00,
+                        ])));
+                    case 'away':
+                        return new this(this.insertChecksum(Buffer.from([
+                            0x05,
+                            options.id & 0xff,
+                            0x01,
+                            0x00,
+                            0x00,
+                            0x00,
+                            0x00,
+                            0x00,
+                        ])));
+                    case 'off':
+                    default:
+                        return new this(this.insertChecksum(Buffer.from([
+                            0x04,
+                            options.id & 0xff,
+                            0x04,
+                            0x00,
+                            0x00,
+                            0x00,
+                            0x00,
+                            0x00,
+                        ])));
+                }
+            case 'temp':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x04,
+                    options.id & 0xff,
+                    0x03,
+                    Number(`0x${options.value.toString()}`),
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
+                break;
+            default:
+                throw new TypeError;
+        }
+    }
+}
+
+export class ReplyPacket extends Packet {
+    static parse(packet) {
+        switch(packet.type) {
+            case 0x04: /* ACK */
+            case 0x02: /* 보일러 */
+                return new ThermostatReplyPacket(packet.raw);
+            case 0x31: /* ACK */
+            case 0x30: /* 조명 */
+                return new LightReplyPacket(packet.raw);
+            case 0x20: /* 일괄소등 스위치 */
+                return new SwitchReplyPacket(packet.raw);
+            case 0x78: /* ACK */
+            case 0x76: /* 전열교환기 */
+                return new FanReplyPacket(packet.raw);
+            case 0x7a: /* ACK */
+            case 0x79: /* 대기전력차단스위치 */
+                if(packet.raw[3] === 0x10) return new OutletEnergyMeterReplyPacket(packet.raw);
+                if(packet.raw[3] === 0x20) return new OutletReplyPacket(packet.raw);
+            case 0x0f:
+            case 0x77:
+                return;
+            default:
+        }
+        console.log(packet.raw);
     }
 }
 
@@ -155,7 +344,7 @@ export class FanReplyPacket extends ReplyPacket {
 
 export class ThermostatReplyPacket extends ReplyPacket {
     static parse(packet) {
-        packet.state = {0x81: 'HEAT', 0x84: 'OFF'}[packet.raw[1]] || `unknown(${packet.raw[1]})`;
+        packet.state = {0x80: 'off', 0x81: 'heat', 0x84: 'away'}[packet.raw[1]] || `unknown(${packet.raw[1]})`;
         packet.thermostatTemperatureAmbient = ~~packet.raw[3].toString(16);
         packet.thermostatTemperatureSetpoint = ~~packet.raw[4].toString(16);
     }

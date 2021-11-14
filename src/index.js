@@ -86,16 +86,44 @@ class MQTTSubscribeSet extends Set {
                 case 'TimePacket':
                     break;
                 case 'RequestPacket':
-                    console.log(packet);
                     if(packet.raw.slice(3,7).toString('hex') === '00000000' && (packet.raw[0] === 0x79 || !packet.raw[2])) {
                         break;
                     }
                 case 'ReplyPacket':
                     if([0x8f, 0xf7].includes(packet.raw[0])) break;
-                    // console.log(packet, packet.raw.toString('hex'));
                     break;
                 case 'FanReplyPacket':
                     {
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`fan/${object_id}/switch`), (_, message) => {
+                            const {id} = packet;
+                            const value = message.toString();
+                            ctx.RS485.publish(new CommaxRs485.FanRequestPacket({
+                                id,
+                                name: 'state',
+                                value: value === 'ON',
+                                current: packet,
+                            }))
+                        });
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`fan/${object_id}/mode`), (_, message) => {
+                            const {id} = packet;
+                            const value = message.toString();
+                            ctx.RS485.publish(new CommaxRs485.FanRequestPacket({
+                                id,
+                                name: 'mode',
+                                value,
+                                current: packet,
+                            }))
+                        });
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`fan/${object_id}/speed`), (_, message) => {
+                            const {id} = packet;
+                            const value = ~~message.toString();
+                            ctx.RS485.publish(new CommaxRs485.FanRequestPacket({
+                                id,
+                                name: 'speed',
+                                value,
+                                current: packet,
+                            }))
+                        });
                         const speed = [
                             'speed_off',
                             'speed_low',
@@ -107,7 +135,7 @@ class MQTTSubscribeSet extends Set {
                                 `fan/${object_id}`,
                                 {
                                     mode: packet.state,
-                                    state: packet.state !== 'off' ? 'ON' : 'OFF',
+                                    state: speed > 0 ? 'ON' : 'OFF',
                                     speed: speed.toString(),
                                 }
                             ),
@@ -116,15 +144,15 @@ class MQTTSubscribeSet extends Set {
                                 {
                                     name: object_id,
                                     unique_id: object_id,
-                                    cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/set`),
+                                    cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/switch`),
                                     stat_t: MQTTPacket.appendPrefix(`fan/${object_id}`),
                                     stat_val_tpl: "{{ value_json.state }}",
                                     pct_stat_t: MQTTPacket.appendPrefix(`fan/${object_id}`),
                                     pct_val_tpl: "{{ value_json.speed }}",
-                                    pct_cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/set`),
+                                    pct_cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/speed`),
                                     pr_mode_stat_t: MQTTPacket.appendPrefix(`fan/${object_id}`),
                                     pr_mode_val_tpl: "{{ value_json.mode }}",
-                                    pr_mode_cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/set`),
+                                    pr_mode_cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/mode`),
                                     spd_rng_min: 1,
                                     spd_rng_max: 3,
                                     pr_modes: [
@@ -141,6 +169,26 @@ class MQTTSubscribeSet extends Set {
                     break;
                 case 'ThermostatReplyPacket':
                     {
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`climate/${object_id}/mode`), (_, message) => {
+                            const {id} = packet;
+                            const value = message.toString();
+                            ctx.RS485.publish(new CommaxRs485.ThermostatRequestPacket({
+                                id,
+                                name: 'mode',
+                                value,
+                                current: packet,
+                            }))
+                        });
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`climate/${object_id}/temp`), (_, message) => {
+                            const {id} = packet;
+                            const value = message.toString();
+                            ctx.RS485.publish(new CommaxRs485.ThermostatRequestPacket({
+                                id,
+                                name: 'temp',
+                                value: ~~value,
+                                current: packet,
+                            }))
+                        });
                         mqtt_packets.push(
                             new MQTTOutgoingPacket(
                                 `climate/${object_id}`,
@@ -152,37 +200,50 @@ class MQTTSubscribeSet extends Set {
                                 }
                             ),
                             new MQTTOutgoingPacket(
+                                `sensor/${object_id}`,
+                                packet.thermostatTemperatureAmbient.toString(),
+                            ),
+                            new MQTTOutgoingPacket(
                                 `climate/${object_id}/config`,
                                 {
                                     name: object_id,
                                     unique_id: object_id,
                                     stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
                                     val_tpl: "{{ value_json.state }}",
-                                    cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/set`),
                                     curr_temp_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
-                                    curr_temp_tpl: "{{ value_json.current_temp }}",
+                                    curr_temp_tpl: "{{ value_json.current_temp | float }}",
+                                    unit_of_meas: "°C",
                                     temp_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
                                     temp_stat_tpl: "{{ value_json.target_temp }}",
-                                    temp_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/set`),
+                                    temp_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/temp`),
                                     mode_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
-                                    mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/set`),
+                                    mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/mode`),
                                     mode_stat_tpl: "{{ value_json.mode }}",
-                                    away_mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/set`),
+                                    away_mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/mode`),
                                     min_temp: "5",
                                     max_temp: "40",
                                     temp_step: "1",
-                                    unit_of_meas: "°C",
                                     modes: [
                                         'off',
                                         'heat',
                                     ],
                                 }
                             ),
+                            new MQTTOutgoingPacket(
+                                `sensor/${object_id}/config`,
+                                {
+                                    name: object_id,
+                                    uniq_id: object_id,
+                                    dev_cla: 'temperature',
+                                    stat_cla: 'measurement',
+                                    stat_t: MQTTPacket.appendPrefix(`sensor/${object_id}`),
+                                    unit_of_meas: '°C',
+                                }
+                            ),
                         );
                     }
                     break;
                 case 'OutletEnergyMeterReplyPacket':
-                    console.log(packet);
                     mqtt_packets.push(
                         new MQTTOutgoingPacket(
                             `sensor/outlet-${packet.id}`,
@@ -191,8 +252,8 @@ class MQTTSubscribeSet extends Set {
                         new MQTTOutgoingPacket(
                             `sensor/outlet-${packet.id}/config`,
                             {
-                                name: object_id,
-                                uniq_id: object_id,
+                                name: `outlet-${packet.id}`,
+                                uniq_id: `outlet-${packet.id}`,
                                 dev_cla: 'power',
                                 stat_cla: 'measurement',
                                 stat_t: MQTTPacket.appendPrefix(`sensor/outlet-${packet.id}`),
@@ -202,21 +263,41 @@ class MQTTSubscribeSet extends Set {
                     );
                     break;
                 case 'OutletReplyPacket':
+                    ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/switch`), (_, message) => {
+                        const {id} = packet;
+                        const value = message.toString();
+                        ctx.RS485.publish(new CommaxRs485.OutletRequestPacket({
+                            id,
+                            name: 'state',
+                            value: value === 'ON',
+                        }))
+                    });
+                    ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/select`), (_, message) => {
+                        const {id} = packet;
+                        const value = message.toString();
+                        ctx.RS485.publish(new CommaxRs485.OutletRequestPacket({
+                            id,
+                            name: 'mode',
+                            value,
+                        }))
+                    });
+                    ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/number`), (_, message) => {
+                        const {id} = packet;
+                        const value = ~~message.toString();
+                        ctx.RS485.publish(new CommaxRs485.OutletRequestPacket({
+                            id,
+                            name: 'threshold',
+                            value,
+                        }))
+                    });
+                    const threshold = ~~packet.threshold;
                     mqtt_packets.push(
                         new MQTTOutgoingPacket(
                             `switch/${object_id}`,
                             {
                                 state: packet.state ? 'ON' : 'OFF',
                                 mode: packet.currentModeSetting,
-                                threshold: packet.threshold
-                            }
-                        ),
-                        new MQTTOutgoingPacket(
-                            `switch/${object_id}/state`,
-                            {
-                                state: packet.state ? 'ON' : 'OFF',
-                                mode: packet.currentModeSetting,
-                                threshold: packet.threshold
+                                threshold
                             }
                         ),
                         new MQTTOutgoingPacket(
@@ -225,7 +306,7 @@ class MQTTSubscribeSet extends Set {
                                 name: object_id,
                                 uniq_id: object_id,
                                 dev_cla: 'outlet',
-                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/set`),
+                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/switch`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
                                 val_tpl: "{{ value_json.state }}",
                             }
@@ -236,8 +317,8 @@ class MQTTSubscribeSet extends Set {
                                 name: object_id,
                                 uniq_id: object_id,
                                 dev_cla: 'outlet',
-                                icon: 'power-plug-off',
-                                cmd_t: MQTTPacket.appendPrefix(`select/${object_id}/set`),
+                                icon: 'mdi:power-plug-off',
+                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/select`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
                                 val_tpl: "{{ value_json.mode }}",
                                 options: [
@@ -252,18 +333,28 @@ class MQTTSubscribeSet extends Set {
                                 name: object_id,
                                 uniq_id: object_id,
                                 dev_cla: 'outlet',
-                                icon: 'power-plug-off',
-                                cmd_t: MQTTPacket.appendPrefix(`number/${object_id}/set`),
+                                icon: 'mdi:power-plug-off',
+                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/number`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
                                 val_tpl: "{{ value_json.threshold }}",
                                 min: 0,
-                                max: 100,
+                                max: 3000,
+                                step: 1,
                                 unit_of_meas: 'W',
                             }
                         ),
                     );
                     break;
                 case 'SwitchReplyPacket':
+                    ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/switch`), (_, message) => {
+                        const {id} = packet;
+                        const value = message.toString();
+                        ctx.RS485.publish(new CommaxRs485.SwitchRequestPacket({
+                            id,
+                            name: 'state',
+                            value: value === 'ON',
+                        }))
+                    });
                     mqtt_packets.push(
                         new MQTTOutgoingPacket(
                             `switch/${object_id}`,
@@ -275,7 +366,7 @@ class MQTTSubscribeSet extends Set {
                                 name: object_id,
                                 uniq_id: object_id,
                                 dev_cla: 'switch',
-                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/set`),
+                                cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/switch`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
                             }
                         ),
@@ -283,7 +374,6 @@ class MQTTSubscribeSet extends Set {
                     break;
                 case 'LightReplyPacket':
                     ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`light/${object_id}/switch`), (_, message) => {
-                        console.log('incoming', message.toString('utf8'));
                         const {id} = packet;
                         const value = message.toString();
                         ctx.RS485.publish(new CommaxRs485.LightRequestPacket({
@@ -309,7 +399,6 @@ class MQTTSubscribeSet extends Set {
                     );
                     break;
                 default:
-                    // console.log(packet);
             }
             if(packet.constructor.name === 'InvalidPacket') {
                 invalid_packets.push(packet);
@@ -323,7 +412,6 @@ class MQTTSubscribeSet extends Set {
                 invalid_packets = [];
             }
             if(mqtt_packets.length) {
-                // console.log(mqtt_packets);
                 if(ctx.MQTT.connected) {
                     for(const packet of mqtt_packets) {
                         ctx.MQTT.publish(`${packet.topic}`, packet.toString(), {
