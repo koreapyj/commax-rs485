@@ -221,9 +221,9 @@ export class FanRequestPacket extends RequestPacket {
                 return new this(this.insertChecksum(Buffer.from([
                     0x78,
                     options.id & 0xff,
-                    0x01,
-                    this.modes.find(x=>x[1] == options.current.state)?.[0] < 3 ? 0x4 : this.modes.find(x=>x[1] == options.current.state)?.[0],
-                    this.speeds.find(x=>x[1] == Math.round(options.value / (100 / (this.speeds.length-1))))?.[0],
+                    0x02,
+                    ~~options.value,
+                    0x00,
                     0x00,
                     0x00,
                     0x00,
@@ -330,7 +330,7 @@ export class ReplyPacket extends Packet {
                 return;
             default:
         }
-        console.log(packet.raw);
+        // console.log(packet.raw);
     }
 }
 

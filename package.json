@@ -10,7 +10,8 @@
   "type": "module",
   "devDependencies": {},
   "scripts": {
-    "start": "test -f .env && export $(cat .env | xargs); node src/index.js"
+    "start:dev": "test -f .env && export $(cat .env | xargs); node src/index.js",
+    "start": "node src/index.js"
   },
   "author": "",
   "license": "ISC"

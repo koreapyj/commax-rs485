@@ -17,13 +17,13 @@ class MQTTPacket {
     }
 
     static appendPrefix(topic) {
-        if(!process.env.COMMAX_MQTT_PREFIX) return topic;
-        return `${process.env.COMMAX_MQTT_PREFIX}/${topic}`;
+        if(!process.env.MQTT_PREFIX) return topic;
+        return `${process.env.MQTT_PREFIX}/${topic}`;
     }
 
     static removePrefix(topic) {
-        if(!process.env.COMMAX_MQTT_PREFIX || !topic.startsWith(process.env.COMMAX_MQTT_PREFIX)) return topic;
-        return topic.substr(process.env.COMMAX_MQTT_PREFIX.length);
+        if(!process.env.MQTT_PREFIX || !topic.startsWith(process.env.MQTT_PREFIX)) return topic;
+        return topic.substr(process.env.MQTT_PREFIX.length);
     }
 }
 
@@ -64,15 +64,22 @@ class MQTTSubscribeSet extends Set {
 (async () => {
     {
         ctx.MQTT = MQTT.connect('mqtt://localhost', {
-            clientId: process.env.COMMAX_MQTT_CLIENT_ID || process.env.COMMAX_MQTT_PREFIX || 'commaxrs485bridge',
-            username: process.env.COMMAX_MQTT_USER,
-            password: process.env.COMMAX_MQTT_PASSWORD
+            clientId: process.env.MQTT_CLIENT_ID || process.env.MQTT_PREFIX || 'commaxrs485bridge',
+            username: process.env.MQTT_USER,
+            password: process.env.MQTT_PASSWORD
         });
         ctx.MQTT._subscribes = new MQTTSubscribeSet(ctx.MQTT);
     }
 
     {
-        const port = process.env.COMMAX_SERIAL_PORT;
+        /* suppress log messages on prod */
+        if(!process.env.DEBUG) {
+            console.log = function(){};
+        }
+    }
+
+    {
+        const port = process.env.SERIAL_PORT;
         let invalid_packets = [];
         console.log(`TARGET=${port}`);
         ctx.RS485 = new CommaxRs485.Listener({port});
@@ -407,6 +414,7 @@ class MQTTSubscribeSet extends Set {
                     invalid_packets = [];
                 }
                 console.warn('WARN: Invalid packet.');
+                console.log(packet.raw);
             }
             else {
                 invalid_packets = [];
