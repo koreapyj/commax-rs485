@@ -252,6 +252,17 @@ export class FanRequestPacket extends RequestPacket {
 export class ThermostatRequestPacket extends RequestPacket {
     static create(_this, options) {
         switch(options.name) {
+            case 'away':
+                return new this(this.insertChecksum(Buffer.from([
+                    0x05,
+                    options.id & 0xff,
+                    options.value?1:2,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                ])));
             case 'mode':
                 switch(options.value) {
                     case 'heat':
@@ -260,17 +271,6 @@ export class ThermostatRequestPacket extends RequestPacket {
                             options.id & 0xff,
                             0x04,
                             0x81,
-                            0x00,
-                            0x00,
-                            0x00,
-                            0x00,
-                        ])));
-                    case 'away':
-                        return new this(this.insertChecksum(Buffer.from([
-                            0x05,
-                            options.id & 0xff,
-                            0x01,
-                            0x00,
                             0x00,
                             0x00,
                             0x00,
@@ -310,6 +310,8 @@ export class ThermostatRequestPacket extends RequestPacket {
 export class ReplyPacket extends Packet {
     static parse(packet) {
         switch(packet.type) {
+            case 0x05: /* 보일러 외출 */
+                return new ThermostatAwayReplyPacket(packet.raw);
             case 0x04: /* ACK */
             case 0x02: /* 보일러 */
                 return new ThermostatReplyPacket(packet.raw);
@@ -330,7 +332,14 @@ export class ReplyPacket extends Packet {
                 return;
             default:
         }
-        // console.log(packet.raw);
+    }
+
+    isReplyOf(packet) {
+        const result =
+            packet.raw[0] === (this.raw[0] & ~0x80)
+            && packet.raw[1] === this.raw[2]
+        ;
+        return result;
     }
 }
 
@@ -340,6 +349,14 @@ export class FanReplyPacket extends ReplyPacket {
         packet.currentFanSpeedSetting = {0x0: 'speed_off', 0x1: 'speed_low', 0x2: 'speed_middle', 0x3: 'speed_high'}[packet.raw[3]] || `unknown(${packet.raw[3]})`;
         packet.timerRemainingSec = packet.raw[4] ? (packet.raw[5]*60+packet.raw[6])*60 : -1;
     }
+
+    isReplyOf(packet) {
+        const result =
+            packet.raw[0] === (this.raw[0] & ~0x80)
+            && packet.raw[1] === this.raw[2]
+        ;
+        return result;
+    }
 }
 
 export class ThermostatReplyPacket extends ReplyPacket {
@@ -347,6 +364,22 @@ export class ThermostatReplyPacket extends ReplyPacket {
         packet.state = {0x80: 'off', 0x81: 'heat', 0x84: 'away'}[packet.raw[1]] || `unknown(${packet.raw[1]})`;
         packet.thermostatTemperatureAmbient = ~~packet.raw[3].toString(16);
         packet.thermostatTemperatureSetpoint = ~~packet.raw[4].toString(16);
+    }
+}
+
+export class ThermostatAwayReplyPacket extends ReplyPacket {
+    static parse(packet) {
+        packet.state = {0x82: 'off', 0x81: 'away'}[packet.raw[1]] || `unknown(${packet.raw[1]})`;
+    }
+
+    isReplyOf(packet) {
+        const result =
+            packet.raw[0] === (this.raw[0] & ~0x80)
+            && (
+                packet.raw[2] === (this.raw[1] & ~0x80)
+            )
+        ;
+        return result;
     }
 }
 
@@ -384,6 +417,8 @@ export class Listener extends EventEmitter {
     #isCalibrating = false
     #publishQueue = []
     #publishQueueLock = false
+    #published = []
+    #isTransmitting = false
 
     constructor(options) {
         const defConfig = {};
@@ -406,16 +441,15 @@ export class Listener extends EventEmitter {
     }
 
     publish(packet, callback) {
-        console.log('rs485 queued', packet.raw);
         this.#publishQueue.push({
-            message: packet.raw,
+            message: packet,
             callback
         });
     }
 
     shutdown(cb) {
         if(this.online) {
-            console.log('INFO: Commax RS485 bridge shutting down...');
+            console.log('INFO: RS485 shutting down...');
             this.#isPeacefulClose = true;
             this.serial.close(cb);
         }
@@ -424,7 +458,7 @@ export class Listener extends EventEmitter {
 
     calibrate(invalid_packets) {
         if(this.#isCalibrating) return;
-        console.log('INFO: Commax RS485 bridge calibrating...');
+        console.log('INFO: RS485 calibrating...');
         this.#isCalibrating = true;
         this.#chunkBuf = Buffer.concat([...invalid_packets.map(x=>x.raw), this.#chunkBuf]);
 
@@ -435,7 +469,7 @@ export class Listener extends EventEmitter {
 
             for(let i = 0 ; i < 8 ; i++) {
                 if(!((new Packet(this.#chunkBuf.slice(i, i+8))) instanceof InvalidPacket)) {
-                    console.log(`INFO: Commax RS485 bridge calibrated. offset=${i}`);
+                    console.log(`INFO: RS485 calibrated. offset=${i}`);
                     this.#chunkBuf = this.#chunkBuf.slice(i);
                     this.#isCalibrating = false;
                     return;
@@ -450,7 +484,7 @@ export class Listener extends EventEmitter {
     }
 
     #onOpen() {
-        console.log('INFO: Commax RS485 bridge online.');
+        console.log('INFO: RS485 online.');
     }
 
     #onClose() {
@@ -462,11 +496,13 @@ export class Listener extends EventEmitter {
         }
         this.#chunkBuf = null;
         this.#isPeacefulClose = false;
-        console.log('INFO: Commax RS485 bridge connection lost.');
+        console.log('INFO: RS485 connection lost.');
     }
 
     #onData(chunk) {
+        const now = Date.now();
         let currentChunk;
+        this.#isTransmitting = true;
         if(!this.#chunkBuf) {
             this.#chunkBuf = chunk;
         }
@@ -478,27 +514,56 @@ export class Listener extends EventEmitter {
         while(this.#chunkBuf.length >= 8) {
             currentChunk = this.#chunkBuf.slice(0, 8);
             this.#chunkBuf = this.#chunkBuf.slice(8);
-
-            if(!currentChunk) {
-                this.#publishQueueEmit();
-                return;
-            }
             const packet = new Packet(currentChunk);
+            if(packet instanceof ReplyPacket) {
+                const deleteList = [];
+                for(let i=0;i<this.#published.length;i++) {
+                    const row = this.#published[i];
+                    if(packet.isReplyOf(row.packet)) {
+                        deleteList.push(i);
+                        continue;
+                    }
+                    if(row.publishedAt + 96 < now) {
+                        if(row.retry > 2) {
+                            console.warn('WARN: Packet failed. Giving up.', row.packet.raw);
+                        }
+                        else {
+                            console.log('INFO: packet timed out. retry.', row.packet.raw);
+                            this.#publishQueue.push({
+                                message: row.packet,
+                                retry: row.retry + 1,
+                            });
+                        }
+                        deleteList.push(i);
+                        continue;
+                    }
+                }
+                for(const i of deleteList.sort((a,b)=>b-a)) {
+                    this.#published.splice(i, 1);
+                }
+            }
             this.emit('data', packet);
         }
-        this.#publishQueueEmit();
+        if(!this.#chunkBuf.length) {
+            this.#isTransmitting = false;
+            setTimeout(()=>{this.#publishQueueEmit();}, 16);
+        }
     }
 
     #publishQueueEmit() {
-        if(this.#publishQueueLock || this.#chunkBuf.length) return;
+        if(this.#publishQueueLock || this.#chunkBuf.length || this.#isTransmitting) return;
         this.#publishQueueLock = true;
         let packet = null;
         while(packet = this.#publishQueue.shift()) {
-            console.log('rs485 sent', packet.message);
-            if(!this.serial.write(packet.message, undefined, packet.callback)) {
-                console.log('rs485 publish failed!', packet.message);
+            if(!this.serial.write(packet.message.raw, undefined, packet.callback)) {
                 this.#publishQueue.unshift(packet);
+                continue;
             }
+            this.#published.push({
+                publishedAt: Date.now(),
+                packet: packet.message,
+                retry: packet.retry || 0,
+            });
         }
         this.#publishQueueLock = false;
     }

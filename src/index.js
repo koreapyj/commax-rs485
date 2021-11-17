@@ -84,9 +84,6 @@ class MQTTSubscribeSet extends Set {
         console.log(`TARGET=${port}`);
         ctx.RS485 = new CommaxRs485.Listener({port});
         ctx.RS485.on('data', (packet) => {
-            if(packet.ack) {
-                ctx.RS485.freePending(Buffer.from([packet.raw[0] & 0x80, packet.raw[2]]));
-            }
             const mqtt_packets = [];
             const object_id = `${packet.constructor.name.replace(/ReplyPacket$/,'').toLowerCase()}-${packet.id}`;
             switch(packet.constructor.name) {
@@ -186,6 +183,16 @@ class MQTTSubscribeSet extends Set {
                                 current: packet,
                             }))
                         });
+                        ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`climate/${object_id}/away`), (_, message) => {
+                            const {id} = packet;
+                            const value = message.toString();
+                            ctx.RS485.publish(new CommaxRs485.ThermostatRequestPacket({
+                                id,
+                                name: 'away',
+                                value: value === 'ON',
+                                current: packet,
+                            }))
+                        });
                         ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`climate/${object_id}/temp`), (_, message) => {
                             const {id} = packet;
                             const value = message.toString();
@@ -201,9 +208,10 @@ class MQTTSubscribeSet extends Set {
                                 `climate/${object_id}`,
                                 {
                                     state: packet.state.toLowerCase() !== 'off' ? 'ON' : 'OFF',
-                                    mode: packet.state.toLowerCase(),
-                                    target_temp: packet.thermostatTemperatureSetpoint.toString(),
-                                    current_temp: packet.thermostatTemperatureAmbient.toString(),
+                                    mode: packet.state.toLowerCase() !== 'off' ? 'heat' : 'off',
+                                    away: packet.state.toLowerCase() === 'away' ? 'ON' : 'OFF',
+                                    target_temp: packet.thermostatTemperatureSetpoint.toString() + '.0',
+                                    current_temp: packet.thermostatTemperatureAmbient.toString() + '.0',
                                 }
                             ),
                             new MQTTOutgoingPacket(
@@ -226,7 +234,9 @@ class MQTTSubscribeSet extends Set {
                                     mode_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
                                     mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/mode`),
                                     mode_stat_tpl: "{{ value_json.mode }}",
-                                    away_mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/mode`),
+                                    away_mode_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
+                                    away_mode_cmd_t: MQTTPacket.appendPrefix(`climate/${object_id}/away`),
+                                    away_mode_stat_tpl: "{{ value_json.away }}",
                                     min_temp: "5",
                                     max_temp: "40",
                                     temp_step: "1",
@@ -413,8 +423,7 @@ class MQTTSubscribeSet extends Set {
                     ctx.RS485.calibrate(invalid_packets);
                     invalid_packets = [];
                 }
-                console.warn('WARN: Invalid packet.');
-                console.log(packet.raw);
+                if(invalid_packets.length) console.warn('WARN: Invalid packet.');
             }
             else {
                 invalid_packets = [];
