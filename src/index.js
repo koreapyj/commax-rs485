@@ -62,6 +62,14 @@ class MQTTSubscribeSet extends Set {
 }
 
 (async () => {
+
+    {
+        /* suppress log messages on prod */
+        if(!process.env.DEBUG) {
+            console.log = function(){};
+        }
+    }
+
     {
         ctx.MQTT = MQTT.connect('mqtt://localhost', {
             clientId: process.env.MQTT_CLIENT_ID || process.env.MQTT_PREFIX || 'commaxrs485bridge',
@@ -69,13 +77,6 @@ class MQTTSubscribeSet extends Set {
             password: process.env.MQTT_PASSWORD
         });
         ctx.MQTT._subscribes = new MQTTSubscribeSet(ctx.MQTT);
-    }
-
-    {
-        /* suppress log messages on prod */
-        if(!process.env.DEBUG) {
-            console.log = function(){};
-        }
     }
 
     {

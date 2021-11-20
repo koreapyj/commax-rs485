@@ -564,6 +564,7 @@ export class Listener extends EventEmitter {
                 packet: packet.message,
                 retry: packet.retry || 0,
             });
+            break;
         }
         this.#publishQueueLock = false;
     }
