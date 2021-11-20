@@ -84,6 +84,16 @@ class MQTTSubscribeSet extends Set {
         let invalid_packets = [];
         console.log(`TARGET=${port}`);
         ctx.RS485 = new CommaxRs485.Listener({port});
+        ctx.RS485._availabilities = {};
+        setInterval(()=>{
+            if(!ctx.MQTT.connected) return;
+            for(const [object_path, availability] of Object.entries(ctx.RS485._availabilities)) {
+                ctx.MQTT.publish(
+                    MQTTPacket.appendPrefix(`${object_path}/availability`),
+                    Date.now() - availability.lastUpdatedAt < 5000 ? 'online' : 'offline'
+                );
+            }
+        }, 1000);
         ctx.RS485.on('data', (packet) => {
             const mqtt_packets = [];
             const object_id = `${packet.constructor.name.replace(/ReplyPacket$/,'').toLowerCase()}-${packet.id}`;
@@ -99,6 +109,9 @@ class MQTTSubscribeSet extends Set {
                     break;
                 case 'FanReplyPacket':
                     {
+                        ctx.RS485._availabilities[`fan/${object_id}`] = {
+                            lastUpdatedAt: Date.now()
+                        };
                         ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`fan/${object_id}/switch`), (_, message) => {
                             const {id} = packet;
                             const value = message.toString();
@@ -149,6 +162,7 @@ class MQTTSubscribeSet extends Set {
                                 {
                                     name: object_id,
                                     unique_id: object_id,
+                                    avty_t: MQTTPacket.appendPrefix(`fan/${object_id}/availability`),
                                     cmd_t: MQTTPacket.appendPrefix(`fan/${object_id}/switch`),
                                     stat_t: MQTTPacket.appendPrefix(`fan/${object_id}`),
                                     stat_val_tpl: "{{ value_json.state }}",
@@ -174,6 +188,9 @@ class MQTTSubscribeSet extends Set {
                     break;
                 case 'ThermostatReplyPacket':
                     {
+                        ctx.RS485._availabilities[`climate/${object_id}`] = {
+                            lastUpdatedAt: Date.now()
+                        };
                         ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`climate/${object_id}/mode`), (_, message) => {
                             const {id} = packet;
                             const value = message.toString();
@@ -224,6 +241,7 @@ class MQTTSubscribeSet extends Set {
                                 {
                                     name: object_id,
                                     unique_id: object_id,
+                                    avty_t: MQTTPacket.appendPrefix(`climate/${object_id}/availability`),
                                     stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
                                     val_tpl: "{{ value_json.state }}",
                                     curr_temp_stat_t: MQTTPacket.appendPrefix(`climate/${object_id}`),
@@ -252,6 +270,7 @@ class MQTTSubscribeSet extends Set {
                                 {
                                     name: object_id,
                                     uniq_id: object_id,
+                                    avty_t: MQTTPacket.appendPrefix(`sensor/${object_id}/availability`),
                                     dev_cla: 'temperature',
                                     stat_cla: 'measurement',
                                     stat_t: MQTTPacket.appendPrefix(`sensor/${object_id}`),
@@ -262,6 +281,9 @@ class MQTTSubscribeSet extends Set {
                     }
                     break;
                 case 'OutletEnergyMeterReplyPacket':
+                    ctx.RS485._availabilities[`sensor/outlet-${packet.id}`] = {
+                        lastUpdatedAt: Date.now()
+                    };
                     mqtt_packets.push(
                         new MQTTOutgoingPacket(
                             `sensor/outlet-${packet.id}`,
@@ -272,6 +294,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: `outlet-${packet.id}`,
                                 uniq_id: `outlet-${packet.id}`,
+                                avty_t: MQTTPacket.appendPrefix(`sensor/outlet-${packet.id}/availability`),
                                 dev_cla: 'power',
                                 stat_cla: 'measurement',
                                 stat_t: MQTTPacket.appendPrefix(`sensor/outlet-${packet.id}`),
@@ -281,6 +304,9 @@ class MQTTSubscribeSet extends Set {
                     );
                     break;
                 case 'OutletReplyPacket':
+                    ctx.RS485._availabilities[`switch/${object_id}`] = {
+                        lastUpdatedAt: Date.now()
+                    };
                     ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/switch`), (_, message) => {
                         const {id} = packet;
                         const value = message.toString();
@@ -323,6 +349,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: object_id,
                                 uniq_id: object_id,
+                                avty_t: MQTTPacket.appendPrefix(`switch/${object_id}/availability`),
                                 dev_cla: 'outlet',
                                 cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/switch`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
@@ -334,6 +361,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: object_id,
                                 uniq_id: object_id,
+                                avty_t: MQTTPacket.appendPrefix(`switch/${object_id}/availability`),
                                 dev_cla: 'outlet',
                                 icon: 'mdi:power-plug-off',
                                 cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/select`),
@@ -350,6 +378,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: object_id,
                                 uniq_id: object_id,
+                                avty_t: MQTTPacket.appendPrefix(`switch/${object_id}/availability`),
                                 dev_cla: 'outlet',
                                 icon: 'mdi:power-plug-off',
                                 cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/number`),
@@ -364,6 +393,9 @@ class MQTTSubscribeSet extends Set {
                     );
                     break;
                 case 'SwitchReplyPacket':
+                    ctx.RS485._availabilities[`switch/${object_id}`] = {
+                        lastUpdatedAt: Date.now()
+                    };
                     ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`switch/${object_id}/switch`), (_, message) => {
                         const {id} = packet;
                         const value = message.toString();
@@ -383,6 +415,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: object_id,
                                 uniq_id: object_id,
+                                avty_t: MQTTPacket.appendPrefix(`switch/${object_id}/availability`),
                                 dev_cla: 'switch',
                                 cmd_t: MQTTPacket.appendPrefix(`switch/${object_id}/switch`),
                                 stat_t: MQTTPacket.appendPrefix(`switch/${object_id}`),
@@ -391,6 +424,9 @@ class MQTTSubscribeSet extends Set {
                     );
                     break;
                 case 'LightReplyPacket':
+                    ctx.RS485._availabilities[`light/${object_id}`] = {
+                        lastUpdatedAt: Date.now()
+                    };
                     ctx.MQTT._subscribes.add(MQTTPacket.appendPrefix(`light/${object_id}/switch`), (_, message) => {
                         const {id} = packet;
                         const value = message.toString();
@@ -410,6 +446,7 @@ class MQTTSubscribeSet extends Set {
                             {
                                 name: object_id,
                                 uniq_id: object_id,
+                                avty_t: MQTTPacket.appendPrefix(`light/${object_id}/availability`),
                                 cmd_t: MQTTPacket.appendPrefix(`light/${object_id}/switch`),
                                 stat_t: MQTTPacket.appendPrefix(`light/${object_id}`),
                             }
@@ -444,6 +481,14 @@ class MQTTSubscribeSet extends Set {
         });
 
         const shutdown = async () => {
+            if(ctx.MQTT.connected) {
+                for(const [object_path, availability] of Object.entries(ctx.RS485._availabilities)) {
+                    ctx.MQTT.publish(
+                        MQTTPacket.appendPrefix(`${object_path}/availability`),
+                        'offline'
+                    );
+                }
+            }
             await Promise.all([
                 new Promise((resolve,_) => {
                     ctx.RS485.shutdown(resolve);
